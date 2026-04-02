@@ -31,7 +31,7 @@ check_go() {
     fi
 
     GO_VERSION=$(go version | awk '{print $3}' | sed 's/go//')
-    REQUIRED_VERSION="1.21"
+    REQUIRED_VERSION="1.24"
 
     if [ "$(printf '%s\n' "$REQUIRED_VERSION" "$GO_VERSION" | sort -V | head -n1)" != "$REQUIRED_VERSION" ]; then
         echo -e "${RED}❌ Go 版本 $GO_VERSION 过低，请安装 Go $REQUIRED_VERSION 或更高版本${NC}"
@@ -105,8 +105,40 @@ build_app() {
 
 # 显示服务信息
 show_info() {
+    # 读取 .env 中的关键配置
+    local port=8002
+    local api_key="0000"
+    local models="claude-sonnet-4.6"
+    local debug="false"
+
+    if [ -f .env ]; then
+        _val=$(grep "^PORT=" .env | cut -d'=' -f2 || true); [ -n "$_val" ] && port=$_val
+        _val=$(grep "^API_KEY=" .env | cut -d'=' -f2 || true); [ -n "$_val" ] && api_key=$_val
+        _val=$(grep "^MODELS=" .env | cut -d'=' -f2 || true); [ -n "$_val" ] && models=$_val
+        _val=$(grep "^DEBUG=" .env | cut -d'=' -f2 || true); [ -n "$_val" ] && debug=$_val
+    fi
+
+    # 掩码 API Key，只显示前4位
+    local masked_key
+    if [ ${#api_key} -le 4 ]; then
+        masked_key="****"
+    else
+        masked_key="${api_key:0:4}****"
+    fi
+
     echo ""
-    echo -e "${GREEN}✅ 准备就绪，正在启动服务...${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${WHITE}  🌐 服务地址:  ${GREEN}http://localhost:${port}${NC}"
+    echo -e "${WHITE}  📚 API 文档:  ${GREEN}http://localhost:${port}/${NC}"
+    echo -e "${WHITE}  💊 健康检查:  ${GREEN}http://localhost:${port}/health${NC}"
+    echo -e "${WHITE}  🔑 API 密钥:  ${YELLOW}${masked_key}${NC}"
+    echo -e "${WHITE}  🤖 模型列表:  ${PURPLE}${models}${NC}"
+    if [ "$debug" = "true" ]; then
+        echo -e "${WHITE}  🐛 调试模式:  ${YELLOW}已启用${NC}"
+    fi
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo -e "${GREEN}✅ 准备就绪，正在启动服务... 按 Ctrl+C 停止${NC}"
     echo ""
 }
 
@@ -118,12 +150,36 @@ start_server() {
     ./cursor2api-go
 }
 
+# 检查端口占用并在需要时清理
+check_port() {
+    # 如果 .env 存在，从中获取端口号，否则使用默认值 8002
+    PORT_TO_CHECK=8002
+    if [ -f .env ]; then
+        ENV_PORT=$(grep "^PORT=" .env | cut -d '=' -f2 || true)
+        if [ ! -z "$ENV_PORT" ]; then
+            PORT_TO_CHECK=$ENV_PORT
+        fi
+    fi
+
+    # 检查是否有进程占用该端口
+    if command -v lsof &> /dev/null; then
+        PID=$(lsof -t -i :$PORT_TO_CHECK || true)
+        if [ ! -z "$PID" ]; then
+            echo -e "${YELLOW}⚠️  检测到端口 $PORT_TO_CHECK 已被占用 (PID: $PID)，正在清理...${NC}"
+            kill -9 $PID &> /dev/null || true
+            sleep 1
+            echo -e "${GREEN}✅ 端口 $PORT_TO_CHECK 已清理${NC}"
+        fi
+    fi
+}
+
 # 主函数
 main() {
     print_header
     check_go
     check_nodejs
     setup_env
+    check_port
     build_app
     show_info
     start_server
